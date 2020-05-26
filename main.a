@@ -1,0 +1,133 @@
+// parameters
+
+frozen var TARGET_WIDTH  = 1920;
+frozen var TARGET_HEIGHT = 1080;
+
+frozen var JOYSTICK_ID = 0;
+frozen var DOF = 0;
+
+// imports
+
+import lib/video.a
+import lib/events.a
+
+import lib/loaders/ipx.a
+import lib/loaders/ivx.a
+
+import lib/devices/graphics/framebuffer.a
+import lib/devices/graphics/shader.a
+import lib/devices/graphics/gl.a
+
+import lib/utils/camera.a
+
+// load assets
+
+Texture.filter Texture.FILTER_MAG_BILINEAR | Texture.FILTER_MIN_BILINEAR;
+Texture->var skybox_texture = Ipx.create_texture("A:/skybox.ipx");
+Texture->var scene_texture = Ipx.create_texture("A:/scene.ipx");
+
+Ivx->var skybox_ivx = new(Ivx).construct("A:/skybox.ivx");
+Ivx->var scene_ivx = new(Ivx).construct("A:/scene.ivx");
+Ivx->var quad_ivx = new(Ivx).construct("A:/quad.ivx");
+
+// framebuffers
+
+Framebuffer->var draw_framebuffer;
+Framebuffer->var dof_x_framebuffer;
+
+if (DOF) {
+	draw_framebuffer = new(Framebuffer).construct(TARGET_WIDTH, TARGET_HEIGHT);
+	dof_x_framebuffer = new(Framebuffer).construct(TARGET_WIDTH, TARGET_HEIGHT);
+}
+
+// shaders
+
+Shader->var draw_shader = new(Shader).construct((import_data shaders/vert.asl), (import_data shaders/frag.asl));
+var draw_shader_mvp_matrix = draw_shader.find("inform_mvp_matrix");
+var draw_shader_texture = draw_shader.find("inform_texture");
+var draw_shader_skybox = draw_shader.find("inform_skybox");
+
+Shader->var dof_shader;
+var dof_shader_texture;
+var dof_shader_depth_texture;
+var dof_shader_direction;
+var dof_shader_focus;
+
+if (DOF) {
+	dof_shader = new(Shader).construct((import_data shaders/dof-vert.asl), (import_data shaders/dof-frag.asl));
+	dof_shader_texture = dof_shader.find("inform_texture");
+	dof_shader_depth_texture = dof_shader.find("inform_depth_texture");
+	dof_shader_direction = dof_shader.find("inform_direction");
+	dof_shader_focus = dof_shader.find("inform_focus");
+}
+
+// camera and input
+
+Joystick->var joystick = new(Joystick).construct(JOYSTICK_ID);
+Matrix->var mvp_matrix = new(Matrix).construct();
+Camera->var camera = new(Camera).construct(Camera.TYPE_FIRST_PERSON, mvp_matrix, joystick);
+camera.py = 1.5;
+
+// main loop
+
+var events = new(Events);
+loop {
+	// prepare drawing
+	
+	camera.update Video.fps() + 1;
+	var texture_slot = 0;
+	var depth_texture_slot = 1;
+	
+	// draw pass
+	
+	if (DOF) draw_framebuffer.bind();
+	Video.clear 1.0, 1.0, 1.0, 1.0;
+	
+	draw_shader.use();
+	
+	// draw skybox
+	var is_skybox = 1;
+	
+	camera.mvp_matrix.translate camera._px, camera._py, camera._pz;
+	draw_shader.inform draw_shader_mvp_matrix, Shader.INFORM_TYPE_FIXED | Shader.INFORM_SIZE_MATRIX, camera.mvp_matrix;
+	
+	Gl.bind_texture texture_slot, skybox_texture;
+	draw_shader.inform draw_shader_texture, Shader.INFORM_TYPE_WHOLE | Shader.INFORM_SIZE_VALUE, &texture_slot;
+	draw_shader.inform draw_shader_skybox, Shader.INFORM_TYPE_WHOLE | Shader.INFORM_SIZE_VALUE, &is_skybox;
+	
+	Gl.attribute 0, ?(skybox_ivx.attribute_components + 00), ?(skybox_ivx.attribute_pointers + 00);
+	Gl.attribute 1, ?(skybox_ivx.attribute_components + 08), ?(skybox_ivx.attribute_pointers + 08);
+	
+	Gl.depth 0;
+	Gl.draw skybox_ivx.index_count, skybox_ivx.index_pointer;
+	Gl.depth 1;
+	
+	// draw scene
+	is_skybox = 0;
+	
+	camera.mvp_matrix.translate -camera._px, -camera._py, -camera._pz;
+	draw_shader.inform draw_shader_mvp_matrix, Shader.INFORM_TYPE_FIXED | Shader.INFORM_SIZE_MATRIX, camera.mvp_matrix;
+	
+	Gl.bind_texture texture_slot, scene_texture;
+	draw_shader.inform draw_shader_skybox, Shader.INFORM_TYPE_WHOLE | Shader.INFORM_SIZE_VALUE, &is_skybox;
+	
+	Gl.attribute 0, ?(scene_ivx.attribute_components + 00), ?(scene_ivx.attribute_pointers + 00);
+	Gl.attribute 1, ?(scene_ivx.attribute_components + 08), ?(scene_ivx.attribute_pointers + 08);
+	
+	Gl.draw scene_ivx.index_count, scene_ivx.index_pointer;
+	
+	// dof pass
+	
+	if (DOF) {
+		
+	}
+	
+	// flip and process events
+	
+	Video.flip();
+	
+	events.get();
+	if (events.quit) break;
+}
+
+return 0;
